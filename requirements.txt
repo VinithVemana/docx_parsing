@@ -1,0 +1,28 @@
+# ── Core (always required) ──────────────────────────────────────────
+tqdm>=4.60
+openpyxl>=3.1        # batch mode Excel summaries
+
+# ── DOCX / DOC pipeline ────────────────────────────────────────────
+lxml>=4.9
+pypandoc>=1.11
+olefile>=0.46        # .doc WordML equation extraction
+# Also requires system packages:
+#   pandoc           — https://pandoc.org/installing.html
+#   libreoffice      — only for .doc input (not needed for .docx)
+
+# ── PDF pipeline (core) ────────────────────────────────────────────
+pymupdf>=1.25.2
+opencv-python-headless>=4.8
+
+# ── PDF pipeline — OCR engines (install at least one) ──────────────
+# Surya (default) — best text accuracy, GPU-accelerated
+surya-ocr>=0.17
+transformers>=4.56,<5
+
+# docTR — good formatting detection, Apache-2.0
+# python-doctr[torch]>=0.9
+
+# Tesseract — fastest, no Python package needed
+# Requires system install:
+#   macOS:  brew install tesseract
+#   Linux:  sudo apt install tesseract-ocr
