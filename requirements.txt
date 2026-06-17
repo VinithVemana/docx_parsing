@@ -26,3 +26,7 @@ transformers>=4.56,<5
 # Requires system install:
 #   macOS:  brew install tesseract
 #   Linux:  sudo apt install tesseract-ocr
+
+# ── 3GPP CR downloader (download_change_requests.py) ───────────────
+playwright>=1.40     # requires `playwright install chromium` after pip install
+requests>=2.31

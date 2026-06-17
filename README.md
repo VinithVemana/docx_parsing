@@ -335,6 +335,39 @@ python docx_parsing.py input/file.docx -f gfm
 | `output` | No | `<input>.md` | Path to write the output Markdown file |
 | `-f` / `--format` | No | `markdown` | Pandoc output format (`markdown`, `gfm`, `markdown_strict`, etc.) |
 
+### 3GPP CR Downloader — `download_change_requests.py`
+
+Bulk-downloads 3GPP Change Requests from the public portal for testing the
+docx pipeline on a wide variety of real-world tracked-change documents.
+Scrapes the **Change Requests** page (`portal.3gpp.org/Home.aspx#/55932-change-requests`),
+randomly samples N CRs across configurable specs, then extracts the
+`.doc` / `.docx` files from each contribution's zip into the output dir.
+
+```bash
+python download_change_requests.py                            # 15 random CRs, default spec mix, both WG + TSG TDocs
+python download_change_requests.py --n 25                     # sample 25 CRs
+python download_change_requests.py --specs 38.331 23.501      # restrict to listed specs
+python download_change_requests.py --kinds wg                 # only WG TDoc column (single CR per doc)
+python download_change_requests.py --kinds tsg                # only TSG TDoc column (CR packs — many docs per zip)
+python download_change_requests.py --output input/crs/        # custom output dir
+python download_change_requests.py --keep-zip --seed 42       # reproducible sampling + retain original zips
+python download_change_requests.py --headed                   # show browser window (debug)
+```
+
+| Argument | Required | Default | Description |
+|:---|:---:|:---|:---|
+| `--n` | No | `15` | Number of CRs to randomly sample |
+| `--specs` | No | popular mix | Spec numbers to search (e.g. `38.331 23.501`). Default rotates across NR RRC/MAC/PHY, LTE RRC, 5GC SA2/CT1 |
+| `--kinds` | No | `wg tsg` | Which TDoc columns to fetch: `wg`, `tsg`, or both |
+| `--output` | No | `input/change_requests` | Output directory |
+| `--keep-zip` | No | `False` | Also save the original `.zip` alongside extracted files |
+| `--seed` | No | random | Random seed for reproducible sampling |
+| `--headed` | No | `False` | Show Playwright browser window (for debugging) |
+
+> **TSG TDocs are CR packs**: a single TSG TDoc zip typically contains 10–30 individual CR documents. This is the fastest way to get broad variety from a single download.
+
+Requires `playwright` and a Chromium install (`playwright install chromium`).
+
 ### Library Usage
 
 ```python
