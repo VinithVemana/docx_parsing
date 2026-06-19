@@ -9,8 +9,11 @@ Requirements:
     LibreOffice must be installed for .doc support: brew install --cask libreoffice
 
 Usage:
-    python docx_track_changes_to_md.py input.docx [output.md]
-    python docx_track_changes_to_md.py input.doc [output.md]
+    python docx_parsing.py input.docx [output.md]
+    python docx_parsing.py input.doc  [output.md]
+    python docx_parsing.py input.doc  [output.md] --ocr-equations   # OCR equations via pix2tex
+    python docx_parsing.py input.docx [output.md] --no-heading-fix  # disable RAG heading post-process
+    python docx_parsing.py input.docx [output.md] -f gfm            # pandoc format other than markdown
 """
 
 import io
@@ -273,6 +276,123 @@ def clean_markdown(md: str) -> str:
     md = re.sub(r"<del[^>]*>\s*</del>", "", md)
 
     return md
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HEADING POST-PROCESSING  (for RAG-friendly section segmentation)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# False-positive headings: a single '#' immediately followed by a digit, e.g.
+# '#3 (Illegal UE);' from CT1 reject-cause lists. Pandoc's permissive ATX
+# parser treats these as H1, which over-segments RAG chunks.
+_FP_HEAD_RE = re.compile(r"^(#+)(\d)")
+
+# A real ATX heading: 1-6 '#' followed by whitespace and non-whitespace.
+_REAL_HEAD_RE = re.compile(r"^(#{1,6})\s+\S")
+
+# Plain-text 3GPP section number, e.g. '5.8.2.2 UE IP Address Management' or
+# '5.3.3.4 Reception of the *RRCConnectionSetup* by the UE'.
+# Anchored: full line, '<int>.' chain, title starts with [A-Z] (avoids prose
+# like '5.3 GHz frequency …'), and allows markdown decoration chars (* _ [ \)
+# inside the title so italicised parameter names don't break the match.
+_PLAIN_SECT_RE = re.compile(
+    r"^((?:\d+\.){1,5}\d+)\s+(\*?[A-Z][A-Za-z0-9 ,./&()\-*_\[\]\\]{1,150})$"
+)
+
+# 3GPP "Start of changes" / "End of changes" delimiters, in all the wild
+# decoration variants seen in real CRs (asterisks, brackets, bold, dots).
+_CHANGE_MARKER_RE = re.compile(
+    r"(?i)(?:start|first|next|last|end)\s+of\s+changes?"
+)
+
+
+def _escape_fp_headings(lines: list[str]) -> int:
+    """Escape '#3 (...)' false positives in-place. Returns count of fixes."""
+    n = 0
+    for i, line in enumerate(lines):
+        if _FP_HEAD_RE.match(line):
+            lines[i] = "\\" + line
+            n += 1
+    return n
+
+
+def _promote_plain_sections(lines: list[str]) -> int:
+    """If no real headings exist, promote plain-text section numbers to '##'.
+    Returns count of promoted lines.
+    """
+    if any(_REAL_HEAD_RE.match(L) for L in lines):
+        return 0
+    n = 0
+    prev_blank = True
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if prev_blank and _PLAIN_SECT_RE.match(stripped):
+            lines[i] = "## " + stripped
+            n += 1
+        prev_blank = (stripped == "")
+    return n
+
+
+def _shift_heading_depth(lines: list[str]) -> int:
+    """Shift heading levels so the shallowest used becomes '#'. Returns shift."""
+    min_level = None
+    for L in lines:
+        m = _REAL_HEAD_RE.match(L)
+        if m:
+            lv = len(m.group(1))
+            if min_level is None or lv < min_level:
+                min_level = lv
+    if not min_level or min_level == 1:
+        return 0
+    shift = min_level - 1
+    for i, line in enumerate(lines):
+        m = _REAL_HEAD_RE.match(line)
+        if m:
+            lv = len(m.group(1))
+            lines[i] = "#" * (lv - shift) + line[lv:]
+    return shift
+
+
+def _strip_cr_form_grid(lines: list[str]) -> int:
+    """If a 3GPP 'Start of changes' marker is found at line N (with at least 50
+    lines of content after it), drop the preceding ASCII grid table. The
+    discarded region is summarised in a single-line note.
+
+    Returns the number of lines dropped (0 if no marker / too little content).
+    """
+    start_idx = None
+    for i, L in enumerate(lines):
+        if _CHANGE_MARKER_RE.search(L):
+            start_idx = i
+            break
+    if start_idx is None or start_idx < 5:
+        return 0
+    if len(lines) - start_idx < 50:
+        return 0
+    dropped = start_idx
+    note = f"<!-- {dropped} lines of CR form metadata stripped (pre 'Start of changes') -->"
+    lines[:start_idx] = [note, ""]
+    return dropped
+
+
+def normalize_headings(md: str) -> str:
+    """Post-process pandoc-emitted markdown so RAG chunkers see clean section
+    boundaries. Combines four fixes:
+      1. Escape '#<digit>' false positives ('#3 (Illegal UE)' → '\\#3 (...)').
+      2. Strip the CR-form ASCII-grid metadata block when a 3GPP
+         'Start of changes' delimiter exists below it.
+      3. Promote plain-text section numbers ('5.8.2.2 ...') to '##' headings
+         when the document has no ATX headings at all.
+      4. Normalise heading depth so the shallowest level used becomes '#',
+         removing per-doc drift where the same section type appears at '#',
+         '##', or '###' across files.
+    """
+    lines = md.split("\n")
+    _escape_fp_headings(lines)
+    _strip_cr_form_grid(lines)
+    _promote_plain_sections(lines)
+    _shift_heading_depth(lines)
+    return "\n".join(lines)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -664,6 +784,7 @@ def convert(
     output_md: str = None,
     md_format: str = "markdown",
     ocr_equations: bool = False,
+    postprocess_headings: bool = True,
 ) -> str:
     """
     Full pipeline:
@@ -673,14 +794,19 @@ def convert(
       3. (Optional) Replace equation images with pix2tex LaTeX
       4. Replace markers with <ins>/<del>/etc. HTML tags
       5. Clean up
+      6. (Optional) Normalise headings for RAG-friendly section segmentation
 
     Parameters
     ----------
-    input_docx    : path to the .docx or .doc file
-    output_md     : path to write the .md file (optional)
-    md_format     : pandoc output format — 'markdown', 'gfm', 'markdown_strict', etc.
-    ocr_equations : if True, run pix2tex on small equation images produced by
-                    LibreOffice's .doc → .docx conversion (requires: pip install pix2tex)
+    input_docx           : path to the .docx or .doc file
+    output_md            : path to write the .md file (optional)
+    md_format            : pandoc output format — 'markdown', 'gfm', 'markdown_strict', etc.
+    ocr_equations        : if True, run pix2tex on small equation images produced by
+                           LibreOffice's .doc → .docx conversion (requires: pip install pix2tex)
+    postprocess_headings : if True (default), apply RAG-friendly heading fixes
+                           (escape '#<digit>' false positives, strip CR-form grid
+                           before 'Start of changes', promote plain section
+                           numbers, normalise heading depth)
 
     Returns
     -------
@@ -740,6 +866,9 @@ def convert(
     md = markers_to_tags(md)
     md = clean_markdown(md)
 
+    if postprocess_headings:
+        md = normalize_headings(md)
+
     if output_md:
         with open(output_md, "w", encoding="utf-8") as f:
             f.write(md)
@@ -773,10 +902,26 @@ if __name__ == "__main__":
             "and replace them with LaTeX text. Requires: pip install pix2tex"
         ),
     )
+    parser.add_argument(
+        "--no-heading-fix",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable RAG-friendly heading post-processing (escape '#<digit>' "
+            "false positives, strip CR-form grid, promote plain section numbers, "
+            "normalise heading depth). Default: on."
+        ),
+    )
 
     args = parser.parse_args()
     src = args.input
     dst = args.output if args.output else src.rsplit(".", 1)[0] + ".md"
 
-    result = convert(src, dst, md_format=args.format, ocr_equations=args.ocr_equations)
+    result = convert(
+        src,
+        dst,
+        md_format=args.format,
+        ocr_equations=args.ocr_equations,
+        postprocess_headings=not args.no_heading_fix,
+    )
     print(result)

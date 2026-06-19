@@ -5,7 +5,7 @@ Unified entry point: accepts .doc, .docx, or .pdf and routes to the
 appropriate pipeline (docx_parsing or pdf_parsing).
 
 Single-file usage:
-    python convert.py input/file.docx
+    python convert.py S1-262062.docx
     python convert.py input/file.doc
     python convert.py input/file.pdf
     python convert.py input/file.pdf --ocr-engine surya
@@ -55,6 +55,7 @@ def convert(
     ocr_equations: bool = False,
     dpi: int = 300,
     flow: str = "default",
+    postprocess_headings: bool = True,
 ) -> str:
     """
     Detect file type and route to the correct conversion pipeline.
@@ -105,6 +106,7 @@ def convert(
         return docx_convert(
             input_path, output_md=output_md, md_format=md_format,
             ocr_equations=ocr_equations,
+            postprocess_headings=postprocess_headings,
         )
 
     # ext == ".pdf"
@@ -273,6 +275,7 @@ def batch_convert(
     ocr_equations: bool = False,
     dpi: int = 300,
     flow: str = "default",
+    postprocess_headings: bool = True,
 ) -> str:
     """
     Convert all supported files in input_dir to Markdown, skipping files
@@ -393,6 +396,7 @@ def batch_convert(
                 ocr_equations=ocr_equations,
                 dpi=dpi,
                 flow=flow,
+                postprocess_headings=postprocess_headings,
             )
         except Exception as exc:
             status    = "failed"
@@ -526,8 +530,17 @@ if __name__ == "__main__":
              "'pymupdf4llm' (force-OCR via pymupdf4llm, no ins/del tags). "
              "Ignored for doc/docx. Default: default.",
     )
+    parser.add_argument(
+        "--no-heading-fix",
+        action="store_true",
+        default=False,
+        help="Disable RAG-friendly heading post-processing for doc/docx output "
+             "(escape '#<digit>' false positives, strip CR-form grid, promote "
+             "plain section numbers, normalise heading depth). Default: on.",
+    )
 
     args = parser.parse_args()
+    postprocess_headings = not args.no_heading_fix
 
     if os.path.isdir(args.input):
         # Batch mode
@@ -539,6 +552,7 @@ if __name__ == "__main__":
             ocr_equations=args.ocr_equations,
             dpi=args.dpi,
             flow=args.flow,
+            postprocess_headings=postprocess_headings,
         )
         print(f"Excel summary written to: {excel}")
     else:
@@ -551,5 +565,6 @@ if __name__ == "__main__":
             ocr_equations=args.ocr_equations,
             dpi=args.dpi,
             flow=args.flow,
+            postprocess_headings=postprocess_headings,
         )
         print(md)
