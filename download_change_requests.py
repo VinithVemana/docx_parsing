@@ -38,7 +38,9 @@ from urllib.parse import urlparse
 
 import requests
 from playwright.sync_api import sync_playwright
+from requests.adapters import HTTPAdapter
 from tqdm import tqdm
+from urllib3.util.retry import Retry
 
 PORTAL_URL = "https://portal.3gpp.org/Home.aspx#/55932-change-requests"
 DOWNLOAD_URL = "http://portal.3gpp.org/ngppapp/DownloadTDoc.aspx?contributionUid={uid}"
@@ -237,14 +239,33 @@ def main():
     # ── Step 3: download + extract each kind ──
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0 (docx_parsing test downloader)"})
+    # 5 retries with exponential backoff for transient DNS / 5xx / connection drops
+    retry = Retry(
+        total=5, connect=5, read=5, status=5, backoff_factor=1.5,
+        status_forcelist=(500, 502, 503, 504),
+        allowed_methods=("GET",),
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
+    # Already-downloaded UIDs (from a previous interrupted run) — skip these
+    existing_uids = set()
+    for f in output_dir.iterdir():
+        if f.is_file() and "__" in f.name:
+            existing_uids.add(f.name.split("__", 1)[0])  # "<uid>_<kind>"
 
     total_files = 0
     failures = 0
+    resumed = 0
     pbar = tqdm(sample, desc="Downloading", unit="CR")
     for r in pbar:
         for kind in args.kinds:
             uid = r.get(f"{kind}_uid")
             if not uid:
+                continue
+            if f"{uid}_{kind}" in existing_uids:
+                resumed += 1
                 continue
             pbar.set_postfix_str(f"{uid} ({kind})")
             try:
@@ -269,6 +290,7 @@ def main():
     print("\n── Run summary ─────────────────────────────")
     print(f"  CRs sampled:    {len(sample)}")
     print(f"  Files extracted: {total_files}")
+    print(f"  Resumed (already on disk): {resumed}")
     print(f"  Failures:       {failures}")
     print(f"  Output dir:     {output_dir.resolve()}")
 
