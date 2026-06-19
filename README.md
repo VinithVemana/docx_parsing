@@ -339,13 +339,14 @@ python docx_parsing.py input/file.docx [output/file.md] --no-heading-fix
 | `--ocr-equations` | No | off | OCR equation PNGs produced by LibreOffice (.doc only) via pix2tex |
 | `--no-heading-fix` | No | off | Disable RAG-friendly heading post-processing |
 
-**Heading post-processing (default on)** — after pandoc emits markdown, four fixes run to make section boundaries reliable for downstream RAG chunkers:
+**Heading post-processing (default on)** — after pandoc emits markdown, five fixes run to make section boundaries reliable for downstream RAG chunkers:
 1. Escape `#<digit>` false positives — `#3 (Illegal UE)` (CT1 reject-cause lists) no longer reads as an H1.
-2. Strip the CR-form ASCII-grid metadata block when a `*** Start of changes ***` delimiter is present.
-3. Promote plain-text 3GPP section numbers (`5.8.2.2 UE IP Address Management`) to `##` headings when the document has zero ATX headings (Word doc was saved without applying `Heading X` styles).
-4. Shift heading depth so the shallowest level used becomes `#`, removing per-doc drift where the same section type appears at `#`, `##`, or `###` across files.
+2. Drop empty heading lines (`####  ` with no title) — pandoc emits these when a Heading style was applied to an empty Word paragraph; they create 0-length RAG chunks.
+3. Strip the CR-form ASCII-grid metadata block when a `*** Start of changes ***` delimiter is present.
+4. Promote plain-text 3GPP section numbers (`5.8.2.2 UE IP Address Management`) to `##` headings when the document has zero ATX headings (Word doc was saved without applying `Heading X` styles).
+5. Shift heading depth so the shallowest level used becomes `#`, removing per-doc drift where the same section type appears at `#`, `##`, or `###` across files.
 
-Pass `--no-heading-fix` to skip all four and return pandoc's raw markdown.
+Pass `--no-heading-fix` to skip all five and return pandoc's raw markdown.
 
 ### 3GPP CR Downloader — `download_change_requests.py`
 

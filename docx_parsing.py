@@ -290,6 +290,11 @@ _FP_HEAD_RE = re.compile(r"^(#+)(\d)")
 # A real ATX heading: 1-6 '#' followed by whitespace and non-whitespace.
 _REAL_HEAD_RE = re.compile(r"^(#{1,6})\s+\S")
 
+# An empty ATX heading line: '#', '##', '#### ' with whitespace but no title.
+# Pandoc emits these when Word source has a Heading style applied to an empty
+# paragraph. Useless for RAG segmentation — drop them.
+_EMPTY_HEAD_RE = re.compile(r"^#{1,6}\s*$")
+
 # Plain-text 3GPP section number, e.g. '5.8.2.2 UE IP Address Management' or
 # '5.3.3.4 Reception of the *RRCConnectionSetup* by the UE'.
 # Anchored: full line, '<int>.' chain, title starts with [A-Z] (avoids prose
@@ -312,6 +317,18 @@ def _escape_fp_headings(lines: list[str]) -> int:
     for i, line in enumerate(lines):
         if _FP_HEAD_RE.match(line):
             lines[i] = "\\" + line
+            n += 1
+    return n
+
+
+def _drop_empty_headings(lines: list[str]) -> int:
+    """Replace empty heading lines ('####  ') with a blank line in-place.
+    Returns count dropped.
+    """
+    n = 0
+    for i, line in enumerate(lines):
+        if _EMPTY_HEAD_RE.match(line):
+            lines[i] = ""
             n += 1
     return n
 
@@ -377,18 +394,22 @@ def _strip_cr_form_grid(lines: list[str]) -> int:
 
 def normalize_headings(md: str) -> str:
     """Post-process pandoc-emitted markdown so RAG chunkers see clean section
-    boundaries. Combines four fixes:
+    boundaries. Combines five fixes:
       1. Escape '#<digit>' false positives ('#3 (Illegal UE)' → '\\#3 (...)').
-      2. Strip the CR-form ASCII-grid metadata block when a 3GPP
+      2. Drop empty heading lines ('####  ' with no title) — Pandoc emits
+         these for empty Word paragraphs that carry a Heading style. They
+         create 0-length sections and confuse RAG chunkers.
+      3. Strip the CR-form ASCII-grid metadata block when a 3GPP
          'Start of changes' delimiter exists below it.
-      3. Promote plain-text section numbers ('5.8.2.2 ...') to '##' headings
+      4. Promote plain-text section numbers ('5.8.2.2 ...') to '##' headings
          when the document has no ATX headings at all.
-      4. Normalise heading depth so the shallowest level used becomes '#',
+      5. Normalise heading depth so the shallowest level used becomes '#',
          removing per-doc drift where the same section type appears at '#',
          '##', or '###' across files.
     """
     lines = md.split("\n")
     _escape_fp_headings(lines)
+    _drop_empty_headings(lines)
     _strip_cr_form_grid(lines)
     _promote_plain_sections(lines)
     _shift_heading_depth(lines)
