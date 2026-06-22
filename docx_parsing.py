@@ -334,19 +334,28 @@ def _drop_empty_headings(lines: list[str]) -> int:
 
 
 def _promote_plain_sections(lines: list[str]) -> int:
-    """If no real headings exist, promote plain-text section numbers to '##'.
-    Returns count of promoted lines.
+    """Promote plain-text 3GPP section numbers to '##' headings.
+
+    Triggers when a line matches _PLAIN_SECT_RE AND is sandwiched between
+    blank lines (real section titles in CRs are always standalone paragraphs;
+    body references like 'see 5.3 Gbps throughput' are never line-start).
+
+    Runs even when the file already has hash-headings — CRs frequently mix
+    Heading-styled paragraphs (which pandoc emits as '#') with bold-only
+    section titles (which arrive as plain text). The blank-blank sandwich
+    keeps false-positives near zero.
     """
-    if any(_REAL_HEAD_RE.match(L) for L in lines):
-        return 0
     n = 0
-    prev_blank = True
+    last = len(lines) - 1
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if prev_blank and _PLAIN_SECT_RE.match(stripped):
+        if not _PLAIN_SECT_RE.match(stripped):
+            continue
+        prev_blank = (i == 0) or (lines[i-1].strip() == "")
+        next_blank = (i == last) or (lines[i+1].strip() == "")
+        if prev_blank and next_blank:
             lines[i] = "## " + stripped
             n += 1
-        prev_blank = (stripped == "")
     return n
 
 
