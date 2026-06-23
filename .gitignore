@@ -8,6 +8,7 @@
 # Keep project docs and dep manifest
 !README.md
 !CLAUDE.md
+!HEADING_DETECTION.md
 !requirements.txt
 
 # Data dirs
